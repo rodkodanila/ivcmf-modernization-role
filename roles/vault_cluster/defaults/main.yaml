@@ -1,0 +1,65 @@
+# name of the virtual disk
+disk_name: "nvme0n2"
+
+
+vault_cluster_name: "vault-raft-prod"
+vault_node_addr: "{{ ansible_host }}"
+vault_api_addr: "http://{{ ansible_host }}:8200"
+
+raft_storage:
+  path: "/data/vault/data"
+  node_id: "{{ inventory_hostname }}"
+  bootstrap_expect: 3
+
+# TLS locations on remote hosts
+tls_dir: /data/vault/ssl
+tls_cert_file: "{{tls_dir}}/vault.crt"
+tls_key_file: "{{tls_dir}}/vault.key"
+tls_ca_file: "{{tls_dir}}/ca.crt"
+local_cert_workdir: "{{ playbook_dir }}/ssl" 
+
+
+
+# NFS mount settings
+# NFS snapshot settings (only for snapshots; init/join не используют NFS)
+nfs_server: "10.0.2.5:/exports/vault-backups"
+nfs_mount: "/mnt/vault-backups"
+snapshot_retention_days: 7
+
+
+# transit (1-node vault) vars
+transit_vault_addr: "https://{{ hostvars['transit1'].ansible_host }}:8200"
+# transit_tls_cert_file: "{{tls_dir}}/transit-vault.crt"
+# transit_tls_key_file: "{{tls_dir}}/transit-vault.key"
+transit_key_name: "autounseal-key"
+
+
+
+# haproxy config
+cert_name: "ivcmf_full.pem"   # ivcmf_full.pem/mfrb-full.pem
+
+
+# keepalived 
+#### keepalived ####
+keepalived_vip: "192.168.145.20"
+nic_interface: "ens33"
+keepalived_password: "supersecret"  # Authentication password
+
+# Role and priority settings
+keepalived_master_priority: 150     # Priority for MASTER
+keepalived_backup_priority: 100     # Priority for BACKUP
+
+# Role assignment logic
+keepalived_role_master: "{{ groups['haproxy_vault'][0] }}"  # First host is MASTER
+keepalived_role: >-
+  {% if inventory_hostname == keepalived_role_master %}
+  MASTER
+  {% else %}
+  BACKUP
+  {% endif %}
+keepalived_priority: >-
+  {% if inventory_hostname == keepalived_role_master %}
+  {{ keepalived_master_priority }}
+  {% else %}
+  {{ keepalived_backup_priority }}
+  {% endif %}

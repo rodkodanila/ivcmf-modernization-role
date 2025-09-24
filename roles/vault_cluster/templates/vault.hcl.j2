@@ -1,0 +1,42 @@
+storage "raft" {
+  path    = "{{ raft_storage.path }}"
+  node_id = "{{ raft_storage.node_id }}"
+  {% if 'vault_raft' in group_names %} 
+  {% if groups['vault_raft'] | length > 1 %}
+  {% for node in groups['vault_raft'] %}
+  retry_join {
+    leader_api_addr = "https://{{ hostvars[node].ansible_host }}:8200"
+    leader_ca_cert_file = "{{ tls_ca_file }}"
+  }
+  {% endfor %}
+  {% endif %}
+  {% endif %}
+}
+listener "tcp" {
+ address = "0.0.0.0:8200"
+ cluster_address = "0.0.0.0:8201"
+ tls_cert_file    = "{{ tls_cert_file }}"
+ tls_key_file     = "{{ tls_key_file }}"
+ tls_client_ca_file = "{{ tls_ca_file }}"
+}
+
+api_addr = "https://{{ ansible_host }}:8200"
+cluster_addr = "https://{{ ansible_host }}:8201"
+cluster_name = "{{ vault_cluster_name }}"
+ui = true
+disable_mlock = true
+log_level = "ERROR"
+
+
+# If this host is a regular raft node (not transit), configure transit seal
+{% if 'vault_raft' in group_names %}
+seal "transit" {
+  address = "https://{{ hostvars['transit1'].ansible_host }}:8200"
+  key_name = "{{ transit_key_name }}"
+  mount_path = "transit/"
+  # when using our self-signed CA you can set tls_skip_verify = false if clients have CA
+  tls_ca_cert_file   = "{{ tls_ca_file }}" 
+  disable_renewal = "false"
+  token = "{{ hostvars['transit1']['seal_token'] }}"
+}
+{% endif %}

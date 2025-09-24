@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+
+NFS_MOUNT="/tmp"
+HOSTNAME=$(hostname -s)
+TS=$(date -u +"%Y%m%dT%H%M%SZ")
+OUTFILE="${NFS_MOUNT}/vault-snapshot-${HOSTNAME}-${TS}.snap"
+
+export VAULT_ADDR={{ vault_api_addr | default("https://127.0.0.1:8200") }}
+
+vault operator raft snapshot save - > "${OUTFILE}"
+find "${NFS_MOUNT}" -name "vault-snapshot-*.snap" -type f -mtime +{{ snapshot_retention_days }} -exec rm -f {} \;

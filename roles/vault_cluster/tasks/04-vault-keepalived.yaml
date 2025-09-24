@@ -1,0 +1,18 @@
+- name: Setup Keepalived
+  block:
+    - name: Install Keepalived package
+      apt:
+        name: keepalived
+        state: present
+
+    - name: Configure Keepalived for each node
+      template:
+        #src: keepalived.j2
+        src: keepalived/keepalived.j2
+        dest: /etc/keepalived/keepalived.conf
+
+    - name: Restart keepalived
+      systemd:
+        name: keepalived
+        enabled: yes
+        state: restarted

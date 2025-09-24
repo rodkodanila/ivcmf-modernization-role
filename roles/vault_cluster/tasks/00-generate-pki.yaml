@@ -1,0 +1,110 @@
+- name: Ensure local cert workdir exists
+  file:
+    path: "{{ local_cert_workdir }}"
+    state: directory
+    mode: '0700'
+  delegate_to: localhost
+  run_once: true
+
+- name: Generate CA key
+  command: openssl genrsa -out {{ local_cert_workdir }}/ca.key.pem 4096
+  args:
+    creates: "{{ local_cert_workdir }}/ca.key.pem"
+  delegate_to: localhost
+  run_once: true
+
+- name: Generate CA cert
+  command: >
+    openssl req -x509 -new -nodes
+    -key {{ local_cert_workdir }}/ca.key.pem
+    -sha256 -days 3650
+    -subj "/CN=Vault-Internal-CA"
+    -out {{ local_cert_workdir }}/ca.crt.pem
+  args:
+    creates: "{{ local_cert_workdir }}/ca.crt.pem"
+  delegate_to: localhost
+  run_once: true
+
+- name: Prepare SAN config
+  template:
+    src: san.cnf.j2
+    dest: "{{ local_cert_workdir }}/openssl_{{ inventory_hostname }}.cnf"
+  delegate_to: localhost
+
+- name: Generate host key
+  command: openssl genrsa -out {{ local_cert_workdir }}/{{ inventory_hostname }}.key.pem 2048
+  args:
+    creates: "{{ local_cert_workdir }}/{{ inventory_hostname }}.key.pem"
+  delegate_to: localhost
+
+- name: Generate CSR
+  command: >
+    openssl req -new
+    -key {{ local_cert_workdir }}/{{ inventory_hostname }}.key.pem
+    -out {{ local_cert_workdir }}/{{ inventory_hostname }}.csr.pem
+    -config {{ local_cert_workdir }}/openssl_{{ inventory_hostname }}.cnf
+  args:
+    creates: "{{ local_cert_workdir }}/{{ inventory_hostname }}.csr.pem"
+  delegate_to: localhost
+
+- name: Sign CSR
+  command: >
+    openssl x509 -req
+    -in {{ local_cert_workdir }}/{{ inventory_hostname }}.csr.pem
+    -CA {{ local_cert_workdir }}/ca.crt.pem
+    -CAkey {{ local_cert_workdir }}/ca.key.pem
+    -CAcreateserial
+    -out {{ local_cert_workdir }}/{{ inventory_hostname }}.crt.pem
+    -days 3650 -sha256
+    -extfile {{ local_cert_workdir }}/openssl_{{ inventory_hostname }}.cnf
+    -extensions v3_req
+  args:
+    creates: "{{ local_cert_workdir }}/{{ inventory_hostname }}.crt.pem"
+  delegate_to: localhost
+
+- name: Ensure TLS dir on host
+  file:
+    path: "{{ tls_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Copy certs to raft nodes
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - { src: "{{ local_cert_workdir }}/{{ inventory_hostname }}.crt.pem", dest: "{{ tls_cert_file }}" }
+    - { src: "{{ local_cert_workdir }}/{{ inventory_hostname }}.key.pem", dest: "{{ tls_key_file }}" }
+    - { src: "{{ local_cert_workdir }}/ca.crt.pem", dest: "{{ tls_ca_file }}" }
+  when: "'vault_raft' in group_names"
+
+- name: Copy certs to transit node
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - { src: "{{ local_cert_workdir }}/{{ inventory_hostname }}.crt.pem", dest: "{{ tls_cert_file }}" }
+    - { src: "{{ local_cert_workdir }}/{{ inventory_hostname }}.key.pem", dest: "{{ tls_key_file }}" }
+    - { src: "{{ local_cert_workdir }}/ca.crt.pem", dest: "{{ tls_ca_file }}" }
+  when: "'vault_transit' in group_names"
+
+
+- name: Install CA certificate into system trust store (Debian/Ubuntu)
+  copy:
+    src: "{{ local_cert_workdir }}/ca.crt.pem"
+    dest: "/usr/local/share/ca-certificates/vault-ca.crt"
+    owner: root
+    group: root
+    mode: '0644'
+  when: ansible_os_family == "Debian"
+
+- name: Update CA trust (Debian/Ubuntu)
+  command: update-ca-certificates

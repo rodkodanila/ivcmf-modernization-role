@@ -1,0 +1,39 @@
+- name: Configure disk for vault
+  block:
+    - name: Install tools for disk managment
+      apt:
+        name:
+          - lvm2
+          - xfsprogs
+        state: latest
+        update_cache: yes
+    - name: Create volume for vault
+      lvg:
+        pvs: "/dev/{{ disk_name }}"
+        vg: vault
+        pvresize: yes
+    - name: Create logic lv-vault
+      lvol:
+        vg: vault
+        lv: lv-vault
+        size: 100%VG
+        state: present
+    - name: Create xfs /dev/vault/lv-vault
+      filesystem:
+        fstype: xfs
+        dev: /dev/vault/lv-vault
+        state: present
+    - name: Create mount point /data/vault
+      file:
+        path: "/data/vault"
+        owner: root
+        group: root
+        state: directory
+        mode: '0755'
+    - name: mount /dev/vault/lv-vault
+      mount:
+        src: /dev/vault/lv-vault
+        path: "/data/vault"
+        fstype: xfs
+        opts: defaults,noatime
+        state: mounted

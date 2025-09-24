@@ -1,0 +1,32 @@
+- name: Install HaProxy
+  block:
+    - name: Install HAProxy
+      apt:
+        name: haproxy
+        state: present
+
+    - name: Configure HAProxy
+      template:
+        src: haproxy/haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+
+    - name: Create ssl folder
+      file:
+        path: /etc/haproxy/ssl
+        state: directory
+        mode: '0755'
+    - name: Copy cert
+      copy:
+        src: ivc-certs/{{ cert_name }}
+        dest: /etc/haproxy/ssl/cert.pem
+
+    - name: Enable and start HAProxy
+      service:
+        name: haproxy
+        enabled: yes
+        state: started
+
+    - name: Restart HAProxy 
+      service:
+        name: haproxy
+        state: restarted

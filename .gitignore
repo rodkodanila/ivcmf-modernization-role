@@ -1,0 +1,4 @@
+ssl
+*.json
+vault-1_20_3
+.vscode

@@ -1,0 +1,29 @@
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    maxconn 4096
+    user haproxy
+    group haproxy
+    daemon
+
+defaults
+    log     global
+    mode    tcp
+    option  tcplog
+    option  dontlognull
+    retries 3
+    timeout connect 5s
+    timeout client  50s
+    timeout server  50s
+
+frontend vault_front
+    bind *:443 ssl crt /etc/haproxy/ssl/cert.pem 
+    default_backend vault_back
+
+backend vault_back
+    balance roundrobin
+    option tcp-check
+    {% for host in groups['vault_raft'] | map('extract', hostvars, ['ansible_host']) | list %}
+    server vault{{ loop.index }} {{ host }}:8200 check ssl verify required ca-file {{ tls_ca_file }}
+    {% endfor %}
+

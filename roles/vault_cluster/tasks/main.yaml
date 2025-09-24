@@ -1,0 +1,23 @@
+- name: "Vault cluster role dispatcher"
+  block:
+    - name: "Configure host"
+      include_tasks: ./00-common.yaml
+    
+    - name: "Run tasks for vault raft cluster nodes"
+      include_tasks: ./00-generate-pki.yaml
+
+    - name: "Run tasks for transit vault node"
+      include_tasks: ./02-vault-transit.yaml
+      when: "'vault_transit' in group_names"
+
+    - name: "Run tasks for vault raft cluster nodes"
+      include_tasks: ./01-vault-raft.yaml
+      when: "'vault_raft' in group_names"
+
+    - name: "Run tasks for haproxy nodes"
+      include_tasks: 03-vault-haproxy.yaml
+      when: "'haproxy_vault' in group_names"
+
+    - name: "Run tasks for keepalived nodes"
+      include_tasks: 04-vault-keepalived.yaml
+      when: "'keepalived_vault' in group_names"
