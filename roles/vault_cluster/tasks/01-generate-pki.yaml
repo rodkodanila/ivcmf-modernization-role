@@ -27,7 +27,7 @@
 
 - name: Prepare SAN config
   template:
-    src: san.cnf.j2
+    src: vault_certs/san.cnf.j2
     dest: "{{ local_cert_workdir }}/openssl_{{ inventory_hostname }}.cnf"
   delegate_to: localhost
 
@@ -104,7 +104,6 @@
     owner: root
     group: root
     mode: '0644'
-  when: ansible_os_family == "Debian"
 
 - name: Update CA trust (Debian/Ubuntu)
   command: update-ca-certificates

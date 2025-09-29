@@ -1,0 +1,231 @@
+- name: Install base packages
+  apt:
+    name: [curl, unzip, jq, nfs-common]
+    update_cache: yes
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Init vault
+  block: 
+  - name: Create vault user
+    user:
+      name: vault
+      system: true
+      shell: /usr/sbin/nologin
+      create_home: false
+
+  - name: Download Vault
+    copy:
+      src: "vault/vault-1_20_3"
+      dest: "/usr/bin/vault"
+      mode: '0755'
+
+  - name: Ensure directories
+    file:
+      path: "{{ item }}"
+      state: directory
+      owner: vault
+      group: vault
+      mode: '0750'
+    loop:
+      - "{{ raft_storage.path }}"
+      - /etc/vault.d
+
+
+  - name: Render vault config
+    template:
+      src: vault/vault.hcl.j2
+      dest: /etc/vault.d/vault.hcl
+      owner: vault
+      group: vault
+      mode: '0640'
+
+  - name: Install vault systemd unit
+    template:
+      src: vault/vault.service.j2
+      dest: /etc/systemd/system/vault.service
+      mode: '0644'
+
+  - name: Enable and start vault
+    systemd:
+      daemon_reload: yes
+      name: vault
+      enabled: yes
+      state: started
+
+  # -------------------- CLUSTER INIT & JOIN --------------------
+  # Ждём, пока локальный API поднимется
+  - name: Wait for API to be up
+    uri:
+      url: "https://127.0.0.1:8200/v1/sys/health"
+      method: GET
+      status_code: [200, 429, 472, 501]
+      return_content: yes
+      validate_certs: no
+    register: vault_health
+    retries: 12
+    delay: 5
+    until: vault_health.status is defined and (vault_health.status in [200, 429, 472, 501])
+
+  # Init только на первой ноде и запись результата на контроллер
+  - name: Init cluster (only on first node)
+    command: >
+      /usr/bin/vault operator init -format=json 
+    register: vault_init
+    environment:
+      VAULT_ADDR: "https://127.0.0.1:8200"
+    when: inventory_hostname == groups['vault_raft'][0]
+
+  - name: Save init result to controller
+    copy:
+      content: "{{ vault_init.stdout }}"
+      dest: "{{ playbook_dir }}/vault_raft_init.json"
+      mode: '0600'
+    delegate_to: localhost
+    when:
+      - inventory_hostname == groups['vault_raft'][0]
+      - vault_init is defined
+
+  # - debug:
+      # var: vault_init
+  
+  - name: Parse initialization results from local file
+    set_fact:
+      vault_init_data: "{{ lookup('file', '{{ playbook_dir }}/vault_raft_init.json') | from_json }}"
+
+
+  - name: Parse initialization results
+    set_fact:
+      vault_root_token: "{{ vault_init_data.root_token }}"
+    when: inventory_hostname == groups['vault_raft'][0]
+
+  - name: Enable and start vault
+    systemd:
+      daemon_reload: yes
+      name: vault
+      enabled: yes
+      state: restarted
+  when: "'vault.service' not in ansible_facts.services" 
+#### Configure backup
+
+- name: Wait for API to be up
+  uri:
+    url: "https://127.0.0.1:8200/v1/sys/health"
+    method: GET
+    status_code: [200, 429, 472, 501]
+    return_content: yes
+    validate_certs: no
+  register: vault_health
+  retries: 12
+  delay: 5
+  until: vault_health.status is defined and (vault_health.status in [200, 429, 472, 501])
+
+- name: Parse initialization results from local file
+  set_fact:
+    vault_init_data: "{{ lookup('file', '{{ playbook_dir }}/vault_raft_init.json') | from_json }}"
+
+
+- name: Parse initialization results
+  set_fact:
+    vault_root_token: "{{ vault_init_data.root_token }}"
+
+- name: Ensure backup policy exists
+  command: >
+    vault policy write backup-policy -
+  args:
+    stdin: |
+      path "sys/storage/raft/snapshot" {
+        capabilities = ["read"]
+      }
+  environment:
+    VAULT_ADDR: "https://127.0.0.1:8200"
+    VAULT_TOKEN: "{{ vault_root_token }}"
+  changed_when: false
+
+- name: Enable approle if not enabled
+  command: vault auth enable approle
+  environment:
+    VAULT_ADDR: "https://127.0.0.1:8200"
+    VAULT_TOKEN: "{{ vault_root_token }}"
+  register: approle_enable
+  failed_when: approle_enable.rc not in [0,2]  
+  changed_when: approle_enable.rc == 0
+
+- name: Create/update backup role
+  command: >
+    vault write auth/approle/role/backup-role
+    token_policies=backup-policy
+    token_period=24h
+  environment:
+    VAULT_ADDR: "https://127.0.0.1:8200"
+    VAULT_TOKEN: "{{ vault_root_token }}"
+
+- name: Get role_id
+  command: vault read -field=role_id auth/approle/role/backup-role/role-id
+  environment:
+    VAULT_ADDR: "https://127.0.0.1:8200"
+    VAULT_TOKEN: "{{ vault_root_token }}"
+  register: role_id
+
+- name: Get secret_id
+  command: vault write -f -field=secret_id auth/approle/role/backup-role/secret-id
+  environment:
+    VAULT_ADDR: "https://127.0.0.1:8200"
+    VAULT_TOKEN: "{{ vault_root_token }}"
+  register: secret_id
+
+- name: Login via approle
+  uri:
+    url: "https://127.0.0.1:8200/v1/auth/approle/login"
+    method: POST
+    body_format: json
+    body:
+      role_id: "{{ role_id.stdout }}"
+      secret_id: "{{ secret_id.stdout }}"
+    return_content: yes
+    validate_certs: no
+  register: vault_login
+
+- name: Set fact with client token
+  set_fact:
+    vault_backup_token: "{{ vault_login.json.auth.client_token }}"
+
+- name: Ensure NFS mount directory exists
+  file:
+    path: "{{ nfs_mount }}"
+    state: directory
+    # owner: root
+    # group: root
+    mode: '0755'
+
+- name: Mount NFS share
+  mount:
+    path: "{{ nfs_mount }}"
+    src: "{{ nfs_server }}"
+    fstype: nfs
+    opts: "rw,vers=4"
+    state: mounted
+
+- name: Ensure script  directory exists
+  file:
+    path: "/data/vault_backup_script"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Copy snapshot script
+  template:
+    src: vault_backup/vault_raft_snapshot_to_nfs.sh.j2
+    dest: /data/vault_backup_script/vault_raft_snapshot_to_nfs.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Setup cron for snapshot
+  copy:
+    dest: /etc/cron.d/vault-snapshot
+    content: |
+      */5 * * * * root /data/vault_backup_script/vault_raft_snapshot_to_nfs.sh >> /var/log/vault-snapshot.log 2>&1
+

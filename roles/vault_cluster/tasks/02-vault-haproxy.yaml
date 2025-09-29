@@ -15,6 +15,7 @@
         path: /etc/haproxy/ssl
         state: directory
         mode: '0755'
+
     - name: Copy cert
       copy:
         src: ivc-certs/{{ cert_name }}

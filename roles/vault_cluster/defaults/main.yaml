@@ -1,11 +1,10 @@
 # name of the virtual disk
 disk_name: "nvme0n2"
 
-
+###### vault raft settings  ######
 vault_cluster_name: "vault-raft-prod"
 vault_node_addr: "{{ ansible_host }}"
 vault_api_addr: "http://{{ ansible_host }}:8200"
-
 raft_storage:
   path: "/data/vault/data"
   node_id: "{{ inventory_hostname }}"
@@ -20,29 +19,31 @@ local_cert_workdir: "{{ playbook_dir }}/ssl"
 
 
 
-# NFS mount settings
 # NFS snapshot settings (only for snapshots; init/join не используют NFS)
-nfs_server: "10.0.2.5:/exports/vault-backups"
-nfs_mount: "/mnt/vault-backups"
+nfs_server: "192.168.145.25:/data/nfs_share"
+nfs_mount: "/data/vault-backups"
 snapshot_retention_days: 7
 
 
 # transit (1-node vault) vars
-transit_vault_addr: "https://{{ hostvars['transit1'].ansible_host }}:8200"
+#transit_vault_addr: "https://{{ hostvars['transit1'].ansible_host }}:8200"
 # transit_tls_cert_file: "{{tls_dir}}/transit-vault.crt"
 # transit_tls_key_file: "{{tls_dir}}/transit-vault.key"
 transit_key_name: "autounseal-key"
 
 
-
 # haproxy config
 cert_name: "ivcmf_full.pem"   # ivcmf_full.pem/mfrb-full.pem
-
+domain_name: "test-vault.ivcmf.by"
 
 # keepalived 
 #### keepalived ####
 keepalived_vip: "192.168.145.20"
 nic_interface: "ens33"
+
+
+
+
 keepalived_password: "supersecret"  # Authentication password
 
 # Role and priority settings
