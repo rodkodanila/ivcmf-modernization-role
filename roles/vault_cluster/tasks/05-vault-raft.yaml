@@ -98,7 +98,7 @@
   - name: Parse initialization results
     set_fact:
       vault_root_token: "{{ vault_init_data.root_token }}"
-    when: inventory_hostname == groups['vault_raft'][0]
+
 
   - name: Enable and start vault
     systemd:
@@ -106,6 +106,11 @@
       name: vault
       enabled: yes
       state: restarted
+  
+  - name: Sleep for 30 seconds
+    ansible.builtin.pause:
+      seconds: 180
+
   when: "'vault.service' not in ansible_facts.services" 
 #### Configure backup
 
@@ -174,7 +179,7 @@
     VAULT_ADDR: "https://127.0.0.1:8200"
     VAULT_TOKEN: "{{ vault_root_token }}"
   register: secret_id
-
+  
 - name: Login via approle
   uri:
     url: "https://127.0.0.1:8200/v1/auth/approle/login"

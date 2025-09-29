@@ -4,10 +4,12 @@ storage "raft" {
   {% if 'vault_raft' in group_names %} 
   {% if groups['vault_raft'] | length > 1 %}
   {% for node in groups['vault_raft'] %}
+  {% if node != inventory_hostname %}
   retry_join {
     leader_api_addr = "https://{{ hostvars[node].ansible_host }}:8200"
     leader_ca_cert_file = "{{ tls_ca_file }}"
   }
+  {% endif %}
   {% endfor %}
   {% endif %}
   {% endif %}
